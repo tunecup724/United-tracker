@@ -45,7 +45,8 @@ app.get('/api/delays', async (req, res) => {
         const dur = f.duration;
         const depDelay = f.dep_delayed || 0;
         const isUS = US_AIRPORTS.has(f.dep_iata) && US_AIRPORTS.has(f.arr_iata);
-        const notDeparted = !['landed','diverted','cancelled'].includes((f.status || '').toLowerCase());
+        // Only show flights that haven't actually departed yet
+        const notDeparted = !f.dep_actual && !['landed','diverted','cancelled','active'].includes((f.status || '').toLowerCase());
         return dur && dur <= 120 && depDelay >= 30 && isUS && notDeparted;
       })
       .map(f => {
