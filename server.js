@@ -31,16 +31,6 @@ function fmtTime(str) {
   } catch { return '—'; }
 }
 
-function isAtLeast30MinsAway(depTimeStr) {
-  if (!depTimeStr) return false;
-  try {
-    const depTime = new Date(depTimeStr.replace(' ', 'T'));
-    const now = new Date();
-    const diffMins = (depTime - now) / 60000;
-    return diffMins >= 30;
-  } catch { return false; }
-}
-
 app.get('/api/delays', async (req, res) => {
   try {
     const url = `https://airlabs.co/api/v9/delays?api_key=${AIRLABS_KEY}&type=departures&airline_iata=UA&delay=30`;
@@ -55,8 +45,8 @@ app.get('/api/delays', async (req, res) => {
         const dur = f.duration;
         const depDelay = f.dep_delayed || 0;
         const isUS = US_AIRPORTS.has(f.dep_iata) && US_AIRPORTS.has(f.arr_iata);
-        const departingSoon = isAtLeast30MinsAway(f.dep_time);
-        return dur && dur <= 120 && depDelay >= 30 && isUS && departingSoon;
+        const notDeparted = !['landed','diverted','cancelled'].includes((f.status || '').toLowerCase());
+        return dur && dur <= 120 && depDelay >= 30 && isUS && notDeparted;
       })
       .map(f => {
         const depDelay = f.dep_delayed || 0;
