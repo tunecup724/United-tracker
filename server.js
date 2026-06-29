@@ -11,7 +11,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 const PORT = process.env.PORT || 3000;
 const AIRLABS_KEY = '09cc4e64-99be-4e97-b1a6-6c7c8106475a';
 
-// All US airports - expanded list
 const US_AIRPORTS = new Set([
   'ORD','EWR','IAH','DEN','SFO','LAX','IAD','MIA','BOS','SEA',
   'ATL','DFW','PHX','MCO','SLC','SAN','DCA','TPA','AUS','BNA',
@@ -21,20 +20,14 @@ const US_AIRPORTS = new Set([
   'ICT','OMA','DSM','BZN','BIL','GEG','BOI','JAC','COS','ASE',
   'CKB','HDN','MTJ','DRO','GJT','PUB','SGU','PIH','IDA','TWF',
   'CPR','RKS','LWS','SMF','OAK','SJC','BUR','LGB','SNA','ONT',
-  'PSP','FAT','RNO','LIH','OGG','KOA','ITO','HNL','ANC','FAI',
-  'JNU','SIT','KTN','PSG','WRG','OME','OTZ','BET','ADQ','AKN',
-  'LRD','GRK','ABI','SJT','GGG','TYR','MLU','SHV','LFT','BTR',
-  'MSY','MOB','HSV','BHM','MGM','DHN','DFW','TUP','JAN','GPT',
-  'MEI','GTR','TRI','CHA','BNA','MEM','NQA','AVL','GSP','CAE',
-  'AGS','SAV','JAX','TLH','PNS','VPS','MOB','CSG','ABY','VAL',
-  'ECP','SFB','RSW','PIE','SRQ','PBI','FLL','MIA','EYW','GNV',
-  'DAB','MLB','ISM','APF','IMM','PHF','NorF','ORF','RIC','CHO',
-  'ROA','LYH','SBY','HGR','MDT','ABE','AVP','IPT','ERI','FKL',
-  'DUJ','JST','HZL','AGC','BFD','OLE','ITH','ELM','BGM','SYR',
-  'PLN','MQT','CIU','IMT','ESC','IRK','TBN','SGF','JLN','FOE',
-  'MHK','SLN','DDC','GCK','HYS','LBF','GRI','LNK','OFK','SUX',
-  'FSD','ABR','ATY','PIR','MOT','DIK','ISN','GFK','DVL','JMS',
-  'FAR','HIB','DLH','INL','LSE','RST','STC','BRD','MOB','AUW'
+  'PSP','FAT','RNO','HNL','OGG','KOA','ITO','LIH','ANC','FAI',
+  'JNU','SIT','KTN','TRI','CHA','MEM','AVL','GSP','CAE','AGS',
+  'SAV','JAX','TLH','PNS','VPS','ECP','SFB','RSW','PIE','SRQ',
+  'PBI','FLL','EYW','GNV','DAB','MLB','PHF','ORF','ROA','LYH',
+  'SBY','MDT','ABE','AVP','IPT','ERI','ITH','ELM','BGM','PLN',
+  'MQT','IMT','ESC','SGF','JLN','FOE','MHK','SLN','LBF','GRI',
+  'LNK','SUX','FSD','ABR','MOT','DIK','ISN','GFK','FAR','DLH',
+  'LSE','RST','STC','HIB','INL'
 ]);
 
 function fmtTime(str) {
@@ -46,20 +39,6 @@ function fmtTime(str) {
     const h12 = h % 12 || 12;
     return `${h12}:${m.toString().padStart(2,'0')} ${ampm}`;
   } catch { return '—'; }
-}
-
-function isFuture(depTimeStr) {
-  // depTimeStr is like "2026-06-29 21:15:00" in local time
-  if (!depTimeStr) return false;
-  try {
-    // Parse as local time by replacing space with T (no Z suffix = local)
-    const depTime = new Date(depTimeStr.replace(' ', 'T'));
-    const now = new Date();
-    // Add UTC offset to compare correctly
-    // AirLabs returns local time, but new Date() without Z treats it as local
-    const diffMins = (depTime - now) / 60000;
-    return diffMins >= 30;
-  } catch { return false; }
 }
 
 app.get('/api/delays', async (req, res) => {
@@ -76,9 +55,9 @@ app.get('/api/delays', async (req, res) => {
         const dur = f.duration;
         const depDelay = f.dep_delayed || 0;
         const isUS = US_AIRPORTS.has(f.dep_iata) && US_AIRPORTS.has(f.arr_iata);
-        const notDeparted = !f.dep_actual && !['landed','diverted','cancelled','active'].includes((f.status || '').toLowerCase());
-        const estimatedFuture = isFuture(f.dep_estimated || f.dep_time);
-        return dur && dur <= 120 && depDelay >= 30 && isUS && notDeparted && estimatedFuture;
+        // Only exclude flights that have actually departed or landed
+        const notDeparted = !f.dep_actual && !['landed','diverted','cancelled'].includes((f.status || '').toLowerCase());
+        return dur && dur <= 120 && depDelay >= 30 && isUS && notDeparted;
       })
       .map(f => {
         const depDelay = f.dep_delayed || 0;
