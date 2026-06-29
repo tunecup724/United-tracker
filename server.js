@@ -31,6 +31,23 @@ function fmtTime(str) {
   } catch { return '—'; }
 }
 
+function isEstimatedFuture(estTimeStr) {
+  if (!estTimeStr || estTimeStr === '—') return false;
+  try {
+    const match = estTimeStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
+    if (!match) return false;
+    let h = parseInt(match[1]);
+    const m = parseInt(match[2]);
+    const ampm = match[3].toUpperCase();
+    if (ampm === 'PM' && h !== 12) h += 12;
+    if (ampm === 'AM' && h === 12) h = 0;
+    const now = new Date();
+    const nowMins = now.getHours() * 60 + now.getMinutes();
+    const estMins = h * 60 + m;
+    return (estMins - nowMins) >= 30;
+  } catch { return false; }
+}
+
 app.get('/api/delays', async (req, res) => {
   try {
     const url = `https://airlabs.co/api/v9/delays?api_key=${AIRLABS_KEY}&type=departures&airline_iata=UA&delay=30`;
@@ -45,9 +62,9 @@ app.get('/api/delays', async (req, res) => {
         const dur = f.duration;
         const depDelay = f.dep_delayed || 0;
         const isUS = US_AIRPORTS.has(f.dep_iata) && US_AIRPORTS.has(f.arr_iata);
-        // Only show flights that haven't actually departed yet
         const notDeparted = !f.dep_actual && !['landed','diverted','cancelled','active'].includes((f.status || '').toLowerCase());
-        return dur && dur <= 120 && depDelay >= 30 && isUS && notDeparted;
+        const estimatedFuture = isEstimatedFuture(fmtTime(f.dep_estimated));
+        return dur && dur <= 120 && depDelay >= 30 && isUS && notDeparted && estimatedFuture;
       })
       .map(f => {
         const depDelay = f.dep_delayed || 0;
