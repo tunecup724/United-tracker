@@ -32,13 +32,12 @@ async function fetchAirportDepartures(airport) {
   try {
     const r = await axios.get(`${FA_URL}/airports/${airport}/flights`, {
       headers: { 'x-apikey': FA_KEY },
-      params: { max_pages: 8 },
-      timeout: 20000
+      params: { max_pages: 4 },
+      timeout: 15000
     });
-    return r.data?.scheduled_departures || r.data?.departures || [];
+    return { airport, flights: r.data?.scheduled_departures || r.data?.departures || [], error: null };
   } catch(e) {
-    console.warn(`Failed ${airport}:`, e.message);
-    return [];
+    return { airport, flights: [], error: e.response?.status || e.message };
   }
 }
 
@@ -46,33 +45,31 @@ app.get('/api/delays', async (req, res) => {
   try {
     const now = new Date();
     const allFlights = [];
+    const errors = [];
 
-    // Smaller batches since each call now fetches more pages
     for (let i = 0; i < AIRPORTS.length; i += 2) {
       const batch = AIRPORTS.slice(i, i + 2);
       const results = await Promise.all(batch.map(ap => fetchAirportDepartures(ap)));
-      results.forEach(flights => allFlights.push(...flights));
-      if (i + 2 < AIRPORTS.length) await new Promise(r => setTimeout(r, 300));
+      results.forEach(r => {
+        allFlights.push(...r.flights);
+        if (r.error) errors.push(`${r.airport}: ${r.error}`);
+      });
+      if (i + 2 < AIRPORTS.length) await new Promise(r => setTimeout(r, 500));
     }
 
     const filtered = allFlights
       .filter(f => {
         if (f.operator_iata !== 'UA') return false;
-
         const depDelay = f.departure_delay || 0;
         if (depDelay < 1800) return false;
-
         const statusLower = (f.status || '').toLowerCase();
         if (f.actual_off) return false;
         if (statusLower.includes('taxiing') || statusLower.includes('en route') || statusLower.includes('landed') || statusLower.includes('arrived')) return false;
-
         const estDep = f.estimated_off || f.estimated_out || f.scheduled_out;
         if (!estDep || new Date(estDep) <= now) return false;
-
         if (!f.scheduled_out || !f.scheduled_in) return false;
         const durMins = (new Date(f.scheduled_in) - new Date(f.scheduled_out)) / 60000;
         if (durMins > 120 || durMins <= 0) return false;
-
         return true;
       })
       .map(f => {
@@ -107,7 +104,13 @@ app.get('/api/delays', async (req, res) => {
         return r[a.risk] - r[b.risk] || b.depDelay - a.depDelay;
       });
 
-    res.json({ success: true, data: filtered, total: allFlights.length, timestamp: new Date().toISOString() });
+    res.json({ 
+      success: true, 
+      data: filtered, 
+      total: allFlights.length, 
+      errors: errors.length > 0 ? errors : null,
+      timestamp: new Date().toISOString() 
+    });
   } catch(e) {
     res.json({ success: false, error: e.message });
   }
