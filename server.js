@@ -28,16 +28,15 @@ function fmtTime(isoStr, timezone) {
   } catch { return '—'; }
 }
 
-async function fetchAirportFlights(airport) {
+async function fetchAirportDepartures(airport) {
   try {
-    // Use the base flights endpoint which we confirmed works
     const r = await axios.get(`${FA_URL}/airports/${airport}/flights`, {
       headers: { 'x-apikey': FA_KEY },
       params: { max_pages: 1 },
       timeout: 10000
     });
-    // Try all possible array keys
-    return r.data?.departures || r.data?.flights || r.data?.scheduled || [];
+    // Use scheduled_departures for upcoming flights
+    return r.data?.scheduled_departures || r.data?.departures || [];
   } catch(e) {
     console.warn(`Failed ${airport}:`, e.message);
     return [];
@@ -51,14 +50,27 @@ app.get('/api/test', async (req, res) => {
       params: { max_pages: 1 },
       timeout: 10000
     });
-    // Show all keys and first flight
+    const deps = r.data?.scheduled_departures || [];
+    // Show UA flights only
+    const ua = deps.filter(f => f.operator_iata === 'UA').slice(0, 3);
+    const all = deps.slice(0, 2);
     res.json({ 
-      keys: Object.keys(r.data || {}),
-      counts: Object.fromEntries(Object.entries(r.data || {}).map(([k,v]) => [k, Array.isArray(v) ? v.length : typeof v])),
-      first_flight: r.data?.departures?.[0] || r.data?.flights?.[0] || r.data?.scheduled?.[0] || 'no flights found'
+      total_scheduled_departures: deps.length,
+      ua_flights: ua.map(f => ({
+        ident: f.ident_iata,
+        dep: f.origin?.code_iata,
+        arr: f.destination?.code_iata,
+        departure_delay: f.departure_delay,
+        status: f.status,
+        actual_off: f.actual_off,
+        estimated_off: f.estimated_off,
+        scheduled_out: f.scheduled_out,
+        scheduled_in: f.scheduled_in
+      })),
+      sample_all: all.map(f => ({ ident: f.ident_iata, operator: f.operator_iata, delay: f.departure_delay }))
     });
   } catch(e) {
-    res.json({ error: e.message, status: e.response?.status, details: e.response?.data });
+    res.json({ error: e.message, details: e.response?.data });
   }
 });
 
@@ -69,7 +81,7 @@ app.get('/api/delays', async (req, res) => {
 
     for (let i = 0; i < AIRPORTS.length; i += 5) {
       const batch = AIRPORTS.slice(i, i + 5);
-      const results = await Promise.all(batch.map(ap => fetchAirportFlights(ap)));
+      const results = await Promise.all(batch.map(ap => fetchAirportDepartures(ap)));
       results.forEach(flights => allFlights.push(...flights));
       if (i + 5 < AIRPORTS.length) await new Promise(r => setTimeout(r, 300));
     }
@@ -78,7 +90,7 @@ app.get('/api/delays', async (req, res) => {
       .filter(f => {
         if (f.operator_iata !== 'UA') return false;
         const depDelay = f.departure_delay || 0;
-        if (depDelay < 1800) return false;
+        if (depDelay < 1800) return false; // 30 mins in seconds
         if (f.actual_off) return false;
         const estDep = f.estimated_off || f.estimated_out || f.scheduled_out;
         if (!estDep || new Date(estDep) <= now) return false;
@@ -119,7 +131,12 @@ app.get('/api/delays', async (req, res) => {
         return r[a.risk] - r[b.risk] || b.depDelay - a.depDelay;
       });
 
-    res.json({ success: true, data: filtered, total: allFlights.length, timestamp: new Date().toISOString() });
+    res.json({ 
+      success: true, 
+      data: filtered, 
+      total: allFlights.length,
+      timestamp: new Date().toISOString() 
+    });
   } catch(e) {
     res.json({ success: false, error: e.message });
   }
