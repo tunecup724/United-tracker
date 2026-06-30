@@ -32,8 +32,8 @@ async function fetchAirportDepartures(airport) {
   try {
     const r = await axios.get(`${FA_URL}/airports/${airport}/flights`, {
       headers: { 'x-apikey': FA_KEY },
-      params: { max_pages: 4 },
-      timeout: 15000
+      params: { max_pages: 8 },
+      timeout: 20000
     });
     return r.data?.scheduled_departures || r.data?.departures || [];
   } catch(e) {
@@ -47,11 +47,12 @@ app.get('/api/delays', async (req, res) => {
     const now = new Date();
     const allFlights = [];
 
-    for (let i = 0; i < AIRPORTS.length; i += 3) {
-      const batch = AIRPORTS.slice(i, i + 3);
+    // Smaller batches since each call now fetches more pages
+    for (let i = 0; i < AIRPORTS.length; i += 2) {
+      const batch = AIRPORTS.slice(i, i + 2);
       const results = await Promise.all(batch.map(ap => fetchAirportDepartures(ap)));
       results.forEach(flights => allFlights.push(...flights));
-      if (i + 3 < AIRPORTS.length) await new Promise(r => setTimeout(r, 300));
+      if (i + 2 < AIRPORTS.length) await new Promise(r => setTimeout(r, 300));
     }
 
     const filtered = allFlights
@@ -59,9 +60,8 @@ app.get('/api/delays', async (req, res) => {
         if (f.operator_iata !== 'UA') return false;
 
         const depDelay = f.departure_delay || 0;
-        if (depDelay < 1800) return false; // 30+ min delay
+        if (depDelay < 1800) return false;
 
-        // Exclude flights that have already left the gate / taken off
         const statusLower = (f.status || '').toLowerCase();
         if (f.actual_off) return false;
         if (statusLower.includes('taxiing') || statusLower.includes('en route') || statusLower.includes('landed') || statusLower.includes('arrived')) return false;
