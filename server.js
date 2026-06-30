@@ -12,7 +12,6 @@ const PORT = process.env.PORT || 3000;
 const FA_KEY = '7s7aNdZg9AzDzG3QA5oJ0GdpaCpjjTdt';
 const FA_URL = 'https://aeroapi.flightaware.com/aeroapi';
 
-// Limited to United's biggest hubs to stay well under 10 req/min
 const AIRPORTS = ['KORD', 'KEWR', 'KIAH', 'KDEN', 'KSFO', 'KLAX', 'KIAD'];
 
 function fmtTime(isoStr, timezone) {
@@ -40,11 +39,9 @@ async function fetchAirportDepartures(airport) {
 
 app.get('/api/delays', async (req, res) => {
   try {
-    const now = new Date();
     const allFlights = [];
     const errors = [];
 
-    // 7 seconds between each call = well under 10/min limit
     for (const airport of AIRPORTS) {
       const result = await fetchAirportDepartures(airport);
       allFlights.push(...result.flights);
@@ -52,19 +49,31 @@ app.get('/api/delays', async (req, res) => {
       await new Promise(r => setTimeout(r, 7000));
     }
 
+    const now = new Date();
+
     const filtered = allFlights
       .filter(f => {
         if (f.operator_iata !== 'UA') return false;
+
+        // Must be delayed 30+ min
         const depDelay = f.departure_delay || 0;
         if (depDelay < 1800) return false;
+
+        // Must not have already departed
         const statusLower = (f.status || '').toLowerCase();
         if (f.actual_off) return false;
         if (statusLower.includes('taxiing') || statusLower.includes('en route') || statusLower.includes('landed') || statusLower.includes('arrived')) return false;
-        const estDep = f.estimated_off || f.estimated_out || f.scheduled_out;
-        if (!estDep || new Date(estDep) <= now) return false;
-        if (!f.scheduled_out || !f.scheduled_in) return false;
+
+        // Original SCHEDULED departure must still be 30+ min in the future
+        if (!f.scheduled_out) return false;
+        const minsUntilSchedDep = (new Date(f.scheduled_out) - now) / 60000;
+        if (minsUntilSchedDep < 30) return false;
+
+        // Duration <= 2 hours
+        if (!f.scheduled_in) return false;
         const durMins = (new Date(f.scheduled_in) - new Date(f.scheduled_out)) / 60000;
         if (durMins > 120 || durMins <= 0) return false;
+
         return true;
       })
       .map(f => {
