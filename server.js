@@ -42,35 +42,6 @@ async function fetchAirportDepartures(airport) {
   }
 }
 
-app.get('/api/test', async (req, res) => {
-  try {
-    const r = await axios.get(`${FA_URL}/airports/KORD/flights`, {
-      headers: { 'x-apikey': FA_KEY },
-      params: { max_pages: 4 },
-      timeout: 15000
-    });
-    const deps = r.data?.scheduled_departures || [];
-    const ua = deps.filter(f => f.operator_iata === 'UA');
-    res.json({ 
-      total_scheduled_departures: deps.length,
-      ua_count: ua.length,
-      ua_flights: ua.slice(0, 5).map(f => ({
-        ident: f.ident_iata,
-        dep: f.origin?.code_iata,
-        arr: f.destination?.code_iata,
-        departure_delay: f.departure_delay,
-        status: f.status,
-        actual_off: f.actual_off,
-        estimated_off: f.estimated_off,
-        scheduled_out: f.scheduled_out,
-        scheduled_in: f.scheduled_in
-      }))
-    });
-  } catch(e) {
-    res.json({ error: e.message, details: e.response?.data });
-  }
-});
-
 app.get('/api/delays', async (req, res) => {
   try {
     const now = new Date();
@@ -86,14 +57,22 @@ app.get('/api/delays', async (req, res) => {
     const filtered = allFlights
       .filter(f => {
         if (f.operator_iata !== 'UA') return false;
+
         const depDelay = f.departure_delay || 0;
-        if (depDelay < 1800) return false;
+        if (depDelay < 1800) return false; // 30+ min delay
+
+        // Exclude flights that have already left the gate / taken off
+        const statusLower = (f.status || '').toLowerCase();
         if (f.actual_off) return false;
+        if (statusLower.includes('taxiing') || statusLower.includes('en route') || statusLower.includes('landed') || statusLower.includes('arrived')) return false;
+
         const estDep = f.estimated_off || f.estimated_out || f.scheduled_out;
         if (!estDep || new Date(estDep) <= now) return false;
+
         if (!f.scheduled_out || !f.scheduled_in) return false;
         const durMins = (new Date(f.scheduled_in) - new Date(f.scheduled_out)) / 60000;
         if (durMins > 120 || durMins <= 0) return false;
+
         return true;
       })
       .map(f => {
