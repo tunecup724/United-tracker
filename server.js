@@ -12,8 +12,6 @@ const PORT = process.env.PORT || 3000;
 const FA_KEY = '7s7aNdZg9AzDzG3QA5oJ0GdpaCpjjTdt';
 const FA_URL = 'https://aeroapi.flightaware.com/aeroapi';
 
-const AIRPORTS = ['KORD', 'KEWR', 'KIAH', 'KDEN', 'KSFO', 'KLAX', 'KIAD'];
-
 function fmtTime(isoStr, timezone) {
   if (!isoStr) return '—';
   try {
@@ -24,56 +22,67 @@ function fmtTime(isoStr, timezone) {
   } catch { return '—'; }
 }
 
-async function fetchAirportDepartures(airport) {
+app.get('/api/test', async (req, res) => {
   try {
-    const r = await axios.get(`${FA_URL}/airports/${airport}/flights`, {
+    // Test the operator scheduled flights endpoint
+    const r = await axios.get(`${FA_URL}/operators/UAL/flights/scheduled`, {
       headers: { 'x-apikey': FA_KEY },
-      params: { max_pages: 2 },
+      params: { max_pages: 1 },
       timeout: 15000
     });
-    return { airport, flights: r.data?.scheduled_departures || r.data?.departures || [], error: null };
+    res.json({
+      status: r.status,
+      keys: Object.keys(r.data || {}),
+      total: r.data?.flights?.length || 0,
+      sample: r.data?.flights?.slice(0, 3).map(f => ({
+        ident: f.ident_iata,
+        dep: f.origin?.code_iata,
+        arr: f.destination?.code_iata,
+        departure_delay: f.departure_delay,
+        status: f.status,
+        scheduled_out: f.scheduled_out,
+        actual_off: f.actual_off
+      }))
+    });
   } catch(e) {
-    return { airport, flights: [], error: e.response?.status || e.message };
+    res.json({ error: e.message, status: e.response?.status, details: e.response?.data });
   }
-}
+});
 
 app.get('/api/delays', async (req, res) => {
   try {
-    const allFlights = [];
-    const errors = [];
-
-    for (const airport of AIRPORTS) {
-      const result = await fetchAirportDepartures(airport);
-      allFlights.push(...result.flights);
-      if (result.error) errors.push(`${result.airport}: ${result.error}`);
-      await new Promise(r => setTimeout(r, 7000));
-    }
-
     const now = new Date();
+    const allFlights = [];
+
+    // Fetch all United scheduled flights in one call
+    let page = 1;
+    let hasMore = true;
+    while (hasMore && page <= 10) {
+      const r = await axios.get(`${FA_URL}/operators/UAL/flights/scheduled`, {
+        headers: { 'x-apikey': FA_KEY },
+        params: { max_pages: 1, cursor: page > 1 ? page : undefined },
+        timeout: 15000
+      });
+      const flights = r.data?.flights || [];
+      allFlights.push(...flights);
+      hasMore = flights.length === 15;
+      page++;
+      if (hasMore) await new Promise(r => setTimeout(r, 500));
+    }
 
     const filtered = allFlights
       .filter(f => {
-        if (f.operator_iata !== 'UA') return false;
-
-        // Must be delayed 30+ min
         const depDelay = f.departure_delay || 0;
         if (depDelay < 1800) return false;
-
-        // Must not have already departed
         const statusLower = (f.status || '').toLowerCase();
         if (f.actual_off) return false;
         if (statusLower.includes('taxiing') || statusLower.includes('en route') || statusLower.includes('landed') || statusLower.includes('arrived')) return false;
-
-        // Original SCHEDULED departure must still be 30+ min in the future
         if (!f.scheduled_out) return false;
         const minsUntilSchedDep = (new Date(f.scheduled_out) - now) / 60000;
         if (minsUntilSchedDep < 30) return false;
-
-        // Duration <= 2 hours
         if (!f.scheduled_in) return false;
         const durMins = (new Date(f.scheduled_in) - new Date(f.scheduled_out)) / 60000;
         if (durMins > 120 || durMins <= 0) return false;
-
         return true;
       })
       .map(f => {
@@ -108,15 +117,9 @@ app.get('/api/delays', async (req, res) => {
         return r[a.risk] - r[b.risk] || b.depDelay - a.depDelay;
       });
 
-    res.json({ 
-      success: true, 
-      data: filtered, 
-      total: allFlights.length, 
-      errors: errors.length > 0 ? errors : null,
-      timestamp: new Date().toISOString() 
-    });
+    res.json({ success: true, data: filtered, total: allFlights.length, timestamp: new Date().toISOString() });
   } catch(e) {
-    res.json({ success: false, error: e.message });
+    res.json({ success: false, error: e.message, details: e.response?.data });
   }
 });
 
