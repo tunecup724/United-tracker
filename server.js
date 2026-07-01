@@ -22,61 +22,60 @@ function fmtTime(isoStr, timezone) {
   } catch { return '—'; }
 }
 
-app.get('/api/test', async (req, res) => {
-  try {
-    const r = await axios.get(`${FA_URL}/operators/UAL/flights/scheduled`, {
-      headers: { 'x-apikey': FA_KEY },
-      params: { max_pages: 1 },
-      timeout: 15000
-    });
-    const flights = r.data?.scheduled || r.data?.flights || [];
-    res.json({
-      status: r.status,
-      keys: Object.keys(r.data || {}),
-      total: flights.length,
-      num_pages: r.data?.num_pages,
-      sample: flights.slice(0, 3).map(f => ({
-        ident: f.ident_iata || f.ident,
-        dep: f.origin?.code_iata,
-        arr: f.destination?.code_iata,
-        departure_delay: f.departure_delay,
-        status: f.status,
-        scheduled_out: f.scheduled_out,
-        actual_off: f.actual_off
-      }))
-    });
-  } catch(e) {
-    res.json({ error: e.message, status: e.response?.status, details: e.response?.data });
-  }
-});
-
 app.get('/api/delays', async (req, res) => {
   try {
     const now = new Date();
     const allFlights = [];
 
-    const r = await axios.get(`${FA_URL}/operators/UAL/flights/scheduled`, {
-      headers: { 'x-apikey': FA_KEY },
-      params: { max_pages: 10 },
-      timeout: 30000
-    });
+    // Fetch all pages of United scheduled flights
+    let cursor = null;
+    let pageCount = 0;
+    const maxPages = 20;
 
-    const flights = r.data?.scheduled || r.data?.flights || [];
-    allFlights.push(...flights);
+    while (pageCount < maxPages) {
+      const params = { max_pages: 1 };
+      if (cursor) params.cursor = cursor;
+
+      const r = await axios.get(`${FA_URL}/operators/UAL/flights/scheduled`, {
+        headers: { 'x-apikey': FA_KEY },
+        params,
+        timeout: 15000
+      });
+
+      const flights = r.data?.scheduled || [];
+      allFlights.push(...flights);
+      pageCount++;
+
+      // Check if there are more pages
+      const nextCursor = r.data?.links?.next;
+      if (!nextCursor || flights.length === 0) break;
+
+      // Extract cursor from next link
+      const cursorMatch = nextCursor.match(/cursor=([^&]+)/);
+      cursor = cursorMatch ? cursorMatch[1] : null;
+      if (!cursor) break;
+
+      await new Promise(r => setTimeout(r, 300));
+    }
 
     const filtered = allFlights
       .filter(f => {
         const depDelay = f.departure_delay || 0;
         if (depDelay < 1800) return false;
+
         const statusLower = (f.status || '').toLowerCase();
         if (f.actual_off) return false;
-        if (statusLower.includes('taxiing') || statusLower.includes('en route') || statusLower.includes('landed') || statusLower.includes('arrived')) return false;
+        if (statusLower.includes('taxiing') || statusLower.includes('en route') ||
+            statusLower.includes('landed') || statusLower.includes('arrived')) return false;
+
         if (!f.scheduled_out) return false;
         const minsUntilSchedDep = (new Date(f.scheduled_out) - now) / 60000;
         if (minsUntilSchedDep < 30) return false;
+
         if (!f.scheduled_in) return false;
         const durMins = (new Date(f.scheduled_in) - new Date(f.scheduled_out)) / 60000;
         if (durMins > 120 || durMins <= 0) return false;
+
         return true;
       })
       .map(f => {
@@ -111,7 +110,13 @@ app.get('/api/delays', async (req, res) => {
         return r[a.risk] - r[b.risk] || b.depDelay - a.depDelay;
       });
 
-    res.json({ success: true, data: filtered, total: allFlights.length, timestamp: new Date().toISOString() });
+    res.json({
+      success: true,
+      data: filtered,
+      total: allFlights.length,
+      pages_fetched: pageCount,
+      timestamp: new Date().toISOString()
+    });
   } catch(e) {
     res.json({ success: false, error: e.message, details: e.response?.data });
   }
