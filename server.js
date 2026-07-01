@@ -24,18 +24,19 @@ function fmtTime(isoStr, timezone) {
 
 app.get('/api/test', async (req, res) => {
   try {
-    // Test the operator scheduled flights endpoint
     const r = await axios.get(`${FA_URL}/operators/UAL/flights/scheduled`, {
       headers: { 'x-apikey': FA_KEY },
       params: { max_pages: 1 },
       timeout: 15000
     });
+    const flights = r.data?.scheduled || r.data?.flights || [];
     res.json({
       status: r.status,
       keys: Object.keys(r.data || {}),
-      total: r.data?.flights?.length || 0,
-      sample: r.data?.flights?.slice(0, 3).map(f => ({
-        ident: f.ident_iata,
+      total: flights.length,
+      num_pages: r.data?.num_pages,
+      sample: flights.slice(0, 3).map(f => ({
+        ident: f.ident_iata || f.ident,
         dep: f.origin?.code_iata,
         arr: f.destination?.code_iata,
         departure_delay: f.departure_delay,
@@ -54,21 +55,14 @@ app.get('/api/delays', async (req, res) => {
     const now = new Date();
     const allFlights = [];
 
-    // Fetch all United scheduled flights in one call
-    let page = 1;
-    let hasMore = true;
-    while (hasMore && page <= 10) {
-      const r = await axios.get(`${FA_URL}/operators/UAL/flights/scheduled`, {
-        headers: { 'x-apikey': FA_KEY },
-        params: { max_pages: 1, cursor: page > 1 ? page : undefined },
-        timeout: 15000
-      });
-      const flights = r.data?.flights || [];
-      allFlights.push(...flights);
-      hasMore = flights.length === 15;
-      page++;
-      if (hasMore) await new Promise(r => setTimeout(r, 500));
-    }
+    const r = await axios.get(`${FA_URL}/operators/UAL/flights/scheduled`, {
+      headers: { 'x-apikey': FA_KEY },
+      params: { max_pages: 10 },
+      timeout: 30000
+    });
+
+    const flights = r.data?.scheduled || r.data?.flights || [];
+    allFlights.push(...flights);
 
     const filtered = allFlights
       .filter(f => {
